@@ -9,65 +9,57 @@ import {
 } from "../api";
 
 export default function WhatsAppPage() {
-  const [status, setStatus] = useState(null);
+  const [statusText, setStatusText] = useState("DISCONNECTED");
+  const [phone, setPhone] = useState("غير مرتبط");
+  const [running, setRunning] = useState("لا");
+  const [isReady, setIsReady] = useState(false);
   const [qr, setQr] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadStatus();
-    loadQr();
+    refreshAll();
 
-    const timer = setInterval(() => {
-      loadStatus();
-      loadQr();
-    }, 3000);
+    const timer = setInterval(refreshAll, 4000);
 
     return () => clearInterval(timer);
   }, []);
 
-  function extractQr(data) {
-    return (
+  function normalizeQr(data) {
+    return String(
       data?.qrCode ||
-      data?.qr ||
-      data?.session?.qrCode ||
-      data?.status?.qrCode ||
-      ""
+        data?.qr ||
+        data?.session?.qrCode ||
+        data?.status?.qrCode ||
+        ""
     );
   }
 
-  function isReadyData(data) {
-    return Boolean(data?.isReady || data?.session?.isReady || data?.status?.isReady);
-  }
+  function applyStatus(data) {
+    const ready = Boolean(data?.isReady);
+    setIsReady(ready);
+    setStatusText(String(data?.status || "DISCONNECTED"));
+    setPhone(String(data?.phone || "غير مرتبط"));
+    setRunning(data?.running ? "نعم" : "لا");
 
-  async function loadStatus() {
-    try {
-      const data = await getWhatsAppStatus();
-      setStatus(data);
-
-      if (data?.isReady) {
-        setQr("");
-      }
-    } catch (err) {
-      setError(err.message || "فشل تحميل حالة واتساب");
+    if (ready) {
+      setQr("");
     }
   }
 
-  async function loadQr() {
+  async function refreshAll() {
     try {
-      const data = await getWhatsAppQr();
+      const status = await getWhatsAppStatus();
+      applyStatus(status);
 
-      const qrValue = extractQr(data);
+      const qrData = await getWhatsAppQr();
+      const qrValue = normalizeQr(qrData);
 
-      if (qrValue) {
-        setQr(String(qrValue));
-      }
-
-      if (isReadyData(data)) {
-        setQr("");
+      if (qrValue && !status?.isReady) {
+        setQr(qrValue);
       }
     } catch (err) {
-      console.log("QR load error:", err);
+      setError(err.message || "فشل تحديث حالة واتساب");
     }
   }
 
@@ -79,27 +71,18 @@ export default function WhatsAppPage() {
 
       await startWhatsApp();
 
-      let foundQr = "";
-
       for (let i = 0; i < 12; i++) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
+        await refreshAll();
 
-        const data = await getWhatsAppQr();
-        const qrValue = extractQr(data);
+        const qrData = await getWhatsAppQr();
+        const qrValue = normalizeQr(qrData);
 
         if (qrValue) {
-          foundQr = String(qrValue);
+          setQr(qrValue);
           break;
         }
       }
-
-      if (foundQr) {
-        setQr(foundQr);
-      } else {
-        setError("تم بدء الربط، لكن لم يصل QR بعد. اضغط تحديث بعد ثوانٍ.");
-      }
-
-      await loadStatus();
     } catch (err) {
       setError(err.message || "فشل بدء واتساب");
     } finally {
@@ -111,11 +94,10 @@ export default function WhatsAppPage() {
     try {
       setLoading(true);
       setError("");
-
-      await stopWhatsApp();
       setQr("");
 
-      await loadStatus();
+      await stopWhatsApp();
+      await refreshAll();
     } catch (err) {
       setError(err.message || "فشل فصل واتساب");
     } finally {
@@ -123,18 +105,11 @@ export default function WhatsAppPage() {
     }
   }
 
-  const isReady = Boolean(status?.isReady);
-
-  const currentStatus =
-    typeof status?.status === "object"
-      ? JSON.stringify(status.status)
-      : status?.status || "DISCONNECTED";
-
   return (
-    <div className="space-y-6" dir="rtl">
+    <div dir="rtl" className="space-y-6">
       {error && (
         <div className="bg-red-50 text-red-600 rounded-xl p-4">
-          {error}
+          {String(error)}
         </div>
       )}
 
@@ -142,24 +117,26 @@ export default function WhatsAppPage() {
         <h2 className="text-2xl font-bold mb-2">ربط واتساب</h2>
 
         <p className="text-slate-500 mb-6">
-          اربط رقم واتساب الخاص بمتجرك. كل متجر له جلسة مستقلة.
+          اربط رقم واتساب الخاص بمتجرك.
         </p>
 
         <div className="grid md:grid-cols-3 gap-4 mb-6">
-          <InfoCard
-            label="الحالة"
-            value={isReady ? "متصل ✅" : currentStatus}
-          />
+          <div className="bg-slate-50 rounded-2xl p-5">
+            <p className="text-slate-500 text-sm mb-1">الحالة</p>
+            <p className="text-xl font-bold break-all">
+              {isReady ? "متصل ✅" : statusText}
+            </p>
+          </div>
 
-          <InfoCard
-            label="رقم واتساب"
-            value={status?.phone || "غير مرتبط"}
-          />
+          <div className="bg-slate-50 rounded-2xl p-5">
+            <p className="text-slate-500 text-sm mb-1">رقم واتساب</p>
+            <p className="text-xl font-bold break-all">{phone}</p>
+          </div>
 
-          <InfoCard
-            label="الجلسة تعمل"
-            value={status?.running ? "نعم" : "لا"}
-          />
+          <div className="bg-slate-50 rounded-2xl p-5">
+            <p className="text-slate-500 text-sm mb-1">الجلسة تعمل</p>
+            <p className="text-xl font-bold break-all">{running}</p>
+          </div>
         </div>
 
         <div className="flex gap-3 flex-wrap">
@@ -180,10 +157,7 @@ export default function WhatsAppPage() {
           </button>
 
           <button
-            onClick={() => {
-              loadStatus();
-              loadQr();
-            }}
+            onClick={refreshAll}
             className="bg-slate-900 text-white px-5 py-3 rounded-xl font-bold"
           >
             تحديث
@@ -207,25 +181,9 @@ export default function WhatsAppPage() {
 
       {isReady && (
         <section className="bg-green-50 text-green-700 rounded-2xl p-6">
-          واتساب متصل بنجاح. النظام سيرد تلقائيًا على عملاء هذا المتجر.
+          واتساب متصل بنجاح.
         </section>
       )}
-    </div>
-  );
-}
-
-function InfoCard({ label, value }) {
-  const displayValue =
-    value === null || value === undefined
-      ? "-"
-      : typeof value === "object"
-      ? JSON.stringify(value)
-      : String(value);
-
-  return (
-    <div className="bg-slate-50 rounded-2xl p-5">
-      <p className="text-slate-500 text-sm mb-1">{label}</p>
-      <p className="text-xl font-bold break-all">{displayValue}</p>
     </div>
   );
 }
