@@ -10,20 +10,29 @@ export function getSocket() {
       transports: ["websocket", "polling"],
       withCredentials: true,
       autoConnect: false,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
     });
   }
-
   return socket;
 }
 
 export function connectSocket(userId) {
   const s = getSocket();
 
+  // تأكد من الاتصال أولاً ثم انضم للغرفة
   if (!s.connected) {
     s.connect();
-  }
 
-  s.emit("join-user-room", userId);
+    // انضم للغرفة بعد الاتصال مباشرة
+    s.once("connect", () => {
+      s.emit("join-user-room", userId);
+    });
+  } else {
+    // إذا كان متصلاً، انضم مباشرة
+    s.emit("join-user-room", userId);
+  }
 
   return s;
 }
