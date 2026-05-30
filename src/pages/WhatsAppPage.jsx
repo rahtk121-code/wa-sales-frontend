@@ -8,8 +8,6 @@ import {
   getWhatsAppQr,
 } from "../api";
 
-import { getSocket } from "../socket";
-
 export default function WhatsAppPage() {
   const [status, setStatus] = useState(null);
   const [qr, setQr] = useState("");
@@ -20,32 +18,22 @@ export default function WhatsAppPage() {
     loadStatus();
     loadQr();
 
-    const socket = getSocket();
+    const timer = setInterval(() => {
+      loadStatus();
+      loadQr();
+    }, 3000);
 
-    socket.on("whatsapp:status", (data) => {
-      setStatus(data);
-
-      if (data?.isReady) {
-        setQr("");
-      }
-    });
-
-    socket.on("whatsapp:qr", (data) => {
-      if (data?.qrCode) {
-        setQr(data.qrCode);
-      }
-    });
-
-    return () => {
-      socket.off("whatsapp:status");
-      socket.off("whatsapp:qr");
-    };
+    return () => clearInterval(timer);
   }, []);
 
   async function loadStatus() {
     try {
       const data = await getWhatsAppStatus();
       setStatus(data);
+
+      if (data?.isReady) {
+        setQr("");
+      }
     } catch (err) {
       setError(err.message || "فشل تحميل حالة واتساب");
     }
@@ -63,7 +51,7 @@ export default function WhatsAppPage() {
         setQr("");
       }
     } catch {
-      // تجاهل
+      // تجاهل مؤقتًا حتى لا تنهار الصفحة
     }
   }
 
@@ -73,8 +61,11 @@ export default function WhatsAppPage() {
       setError("");
 
       await startWhatsApp();
-      await loadStatus();
-      await loadQr();
+
+      setTimeout(() => {
+        loadStatus();
+        loadQr();
+      }, 1500);
     } catch (err) {
       setError(err.message || "فشل بدء واتساب");
     } finally {
@@ -89,6 +80,7 @@ export default function WhatsAppPage() {
 
       await stopWhatsApp();
       setQr("");
+
       await loadStatus();
     } catch (err) {
       setError(err.message || "فشل فصل واتساب");
@@ -97,7 +89,7 @@ export default function WhatsAppPage() {
     }
   }
 
-  const isReady = status?.isReady;
+  const isReady = Boolean(status?.isReady);
   const currentStatus = status?.status || "DISCONNECTED";
 
   return (
@@ -116,9 +108,20 @@ export default function WhatsAppPage() {
         </p>
 
         <div className="grid md:grid-cols-3 gap-4 mb-6">
-          <InfoCard label="الحالة" value={isReady ? "متصل ✅" : currentStatus} />
-          <InfoCard label="رقم واتساب" value={status?.phone || "غير مرتبط"} />
-          <InfoCard label="الجلسة تعمل" value={status?.running ? "نعم" : "لا"} />
+          <InfoCard
+            label="الحالة"
+            value={isReady ? "متصل ✅" : currentStatus}
+          />
+
+          <InfoCard
+            label="رقم واتساب"
+            value={status?.phone || "غير مرتبط"}
+          />
+
+          <InfoCard
+            label="الجلسة تعمل"
+            value={status?.running ? "نعم" : "لا"}
+          />
         </div>
 
         <div className="flex gap-3 flex-wrap">
@@ -155,7 +158,7 @@ export default function WhatsAppPage() {
           <h3 className="text-xl font-bold mb-4">امسح QR من واتساب</h3>
 
           <div className="inline-block bg-white p-4 rounded-2xl border">
-            <QRCode value={qr} size={260} />
+            <QRCode value={qr} size={180} />
           </div>
 
           <p className="text-slate-500 mt-4">
