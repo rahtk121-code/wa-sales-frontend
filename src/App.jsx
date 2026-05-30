@@ -3,128 +3,285 @@ import { useAuth } from "./context/AuthContext";
 
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
-import DashboardPage from "./pages/DashboardPage";
-import CustomersPage from "./pages/CustomersPage";
-import ProductsPage from "./pages/ProductsPage";
-import OrdersPage from "./pages/OrdersPage";
-import ChatsPage from "./pages/ChatsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import WhatsAppPage from "./pages/WhatsAppPage";
-import Toast from "./components/Toast";
 
-import { connectSocket, disconnectSocket, getSocket } from "./socket";
+import {
+  getAnalytics,
+  getCustomers,
+  getProducts,
+  getOrders,
+  getChats,
+} from "./api";
 
 export default function App() {
   const { user, isAuthenticated, logout } = useAuth();
+
   const [mode, setMode] = useState("login");
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [toast, setToast] = useState(null);
 
-  function showToast(message, type = "success") {
-    setToast({ message, type });
-  }
+  const [analytics, setAnalytics] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [chats, setChats] = useState([]);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.id) return;
-
-    const socket = connectSocket(user.id);
-
-    socket.on("message:new", (data) => {
-      if (document.hidden) {
-        try {
-          if (Notification.permission === "granted") {
-            new Notification("رسالة واتساب جديدة 💬", {
-              body: data.message?.content?.slice(0, 80) || "رسالة جديدة",
-              icon: "/vite.svg",
-            });
-          }
-        } catch {}
-      }
-    });
-
-    // Request notification permission
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+    if (isAuthenticated) {
+      loadDashboard();
     }
+  }, [isAuthenticated]);
 
-    return () => {
-      disconnectSocket();
-    };
-  }, [isAuthenticated, user?.id]);
+  async function loadDashboard() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const [analyticsData, customersData, productsData, ordersData, chatsData] =
+        await Promise.all([
+          getAnalytics().catch(() => null),
+          getCustomers().catch(() => []),
+          getProducts().catch(() => []),
+          getOrders().catch(() => []),
+          getChats().catch(() => []),
+        ]);
+
+      setAnalytics(analyticsData);
+      setCustomers(Array.isArray(customersData) ? customersData : []);
+      setProducts(Array.isArray(productsData) ? productsData : []);
+      setOrders(Array.isArray(ordersData) ? ordersData : []);
+      setChats(Array.isArray(chatsData) ? chatsData : []);
+    } catch (err) {
+      setError(err.message || "فشل تحميل البيانات");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-slate-100" dir="rtl">
-        {mode === "login" ? <LoginPage /> : <RegisterPage />}
-        <div className="fixed bottom-6 left-0 right-0 text-center">
-          <button
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
-            className="text-green-700 font-medium text-sm"
-          >
-            {mode === "login" ? "ليس لديك حساب؟ إنشاء حساب جديد" : "لديك حساب؟ تسجيل الدخول"}
-          </button>
-        </div>
-      </div>
+    return mode === "login" ? (
+      <>
+        <LoginPage />
+        <AuthSwitch onClick={() => setMode("register")}>
+          إنشاء حساب جديد
+        </AuthSwitch>
+      </>
+    ) : (
+      <>
+        <RegisterPage />
+        <AuthSwitch onClick={() => setMode("login")}>
+          لدي حساب بالفعل
+        </AuthSwitch>
+      </>
     );
   }
 
-  const tabs = [
-    { id: "dashboard", label: "📊 الرئيسية" },
-    { id: "chats", label: "💬 المحادثات" },
-    { id: "customers", label: "👥 العملاء" },
-    { id: "products", label: "📦 المنتجات" },
-    { id: "orders", label: "🧾 الطلبات" },
-    { id: "whatsapp", label: "📱 واتساب" },
-    { id: "settings", label: "⚙️ الإعدادات" },
-    { id: "subscription", label: "💎 الاشتراك" },
-  ];
-
   return (
     <div dir="rtl" className="min-h-screen bg-slate-100">
-      <header className="bg-white border-b shadow-sm sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+      <header className="bg-white border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold text-green-700">WhatsApp Sales Agent</h1>
-            <p className="text-xs text-slate-500">مرحبًا، {user?.name}</p>
+            <h1 className="text-2xl font-bold">WhatsApp Sales Agent</h1>
+            <p className="text-slate-500">مرحبًا {user?.name || "مستخدم"}</p>
           </div>
-          <button onClick={logout} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm">
+
+          <button
+            onClick={logout}
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl"
+          >
             خروج
           </button>
         </div>
-        <div className="max-w-7xl mx-auto px-4 pb-3 flex gap-2 overflow-x-auto">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`whitespace-nowrap px-4 py-2 rounded-xl text-sm font-medium transition ${
-                activeTab === tab.id ? "bg-green-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4">
-        {activeTab === "dashboard" && <DashboardPage showToast={showToast} />}
-        {activeTab === "chats" && <ChatsPage showToast={showToast} />}
-        {activeTab === "customers" && <CustomersPage showToast={showToast} />}
-        {activeTab === "products" && <ProductsPage showToast={showToast} />}
-        {activeTab === "orders" && <OrdersPage showToast={showToast} />}
+      <main className="max-w-7xl mx-auto p-6">
+        <div className="flex gap-3 mb-6 flex-wrap">
+          <TabButton
+            active={activeTab === "dashboard"}
+            onClick={() => setActiveTab("dashboard")}
+          >
+            لوحة التحكم
+          </TabButton>
+
+          <TabButton
+            active={activeTab === "whatsapp"}
+            onClick={() => setActiveTab("whatsapp")}
+          >
+            واتساب
+          </TabButton>
+
+          <TabButton
+            active={activeTab === "settings"}
+            onClick={() => setActiveTab("settings")}
+          >
+            إعدادات AI
+          </TabButton>
+
+          <TabButton
+            active={activeTab === "subscription"}
+            onClick={() => setActiveTab("subscription")}
+          >
+            الاشتراك
+          </TabButton>
+        </div>
+
+        {activeTab === "dashboard" && (
+          <>
+            {error && (
+              <div className="bg-red-100 text-red-700 p-4 rounded-xl mb-5">
+                {error}
+              </div>
+            )}
+
+            <div className="grid md:grid-cols-4 gap-4 mb-6">
+              <StatCard
+                title="العملاء"
+                value={analytics?.customers ?? customers.length}
+              />
+              <StatCard
+                title="المنتجات"
+                value={analytics?.products ?? products.length}
+              />
+              <StatCard
+                title="الطلبات"
+                value={analytics?.orders ?? orders.length}
+              />
+              <StatCard
+                title="المحادثات"
+                value={analytics?.chats ?? chats.length}
+              />
+            </div>
+
+            <button
+              onClick={loadDashboard}
+              className="bg-black text-white px-5 py-3 rounded-xl mb-8"
+            >
+              {loading ? "جاري التحديث..." : "تحديث"}
+            </button>
+
+            <div className="grid lg:grid-cols-2 gap-6">
+              <Panel title="آخر العملاء">
+                <SimpleList
+                  items={customers}
+                  empty="لا يوجد عملاء"
+                  render={(c) => (
+                    <div key={c.id} className="border-b py-3">
+                      <div className="font-bold">{c.name || c.phone}</div>
+                      <div className="text-slate-500 text-sm">{c.phone}</div>
+                    </div>
+                  )}
+                />
+              </Panel>
+
+              <Panel title="آخر المنتجات">
+                <SimpleList
+                  items={products}
+                  empty="لا توجد منتجات"
+                  render={(p) => (
+                    <div key={p.id} className="border-b py-3">
+                      <div className="font-bold">{p.name}</div>
+                      <div className="text-slate-500 text-sm">
+                        السعر: {p.price} — المخزون: {p.stock}
+                      </div>
+                    </div>
+                  )}
+                />
+              </Panel>
+
+              <Panel title="آخر الطلبات">
+                <SimpleList
+                  items={orders}
+                  empty="لا توجد طلبات"
+                  render={(o) => (
+                    <div key={o.id} className="border-b py-3">
+                      <div className="font-bold">
+                        {o.customer?.name || o.customer?.phone || "عميل"}
+                      </div>
+                      <div className="text-slate-500 text-sm">
+                        الحالة: {o.status} — الإجمالي: {o.total}
+                      </div>
+                    </div>
+                  )}
+                />
+              </Panel>
+
+              <Panel title="آخر المحادثات">
+                <SimpleList
+                  items={chats}
+                  empty="لا توجد محادثات"
+                  render={(c) => (
+                    <div key={c.id} className="border-b py-3">
+                      <div className="font-bold">
+                        {c.customer?.name || c.customer?.phone || "محادثة"}
+                      </div>
+                      <div className="text-slate-500 text-sm">
+                        عدد الرسائل: {c.messages?.length || 0}
+                      </div>
+                    </div>
+                  )}
+                />
+              </Panel>
+            </div>
+          </>
+        )}
+
         {activeTab === "whatsapp" && <WhatsAppPage />}
-        {activeTab === "settings" && <SettingsPage showToast={showToast} />}
+        {activeTab === "settings" && <SettingsPage />}
         {activeTab === "subscription" && <SubscriptionPage />}
       </main>
-
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
-      )}
     </div>
   );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-5 py-3 rounded-xl transition ${
+        active ? "bg-green-600 text-white" : "bg-white hover:bg-slate-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AuthSwitch({ children, onClick }) {
+  return (
+    <div className="fixed bottom-6 left-0 right-0 text-center">
+      <button onClick={onClick} className="text-green-700 font-medium">
+        {children}
+      </button>
+    </div>
+  );
+}
+
+function StatCard({ title, value }) {
+  return (
+    <div className="bg-white rounded-2xl p-6 shadow-sm">
+      <h2 className="text-lg font-bold mb-2">{title}</h2>
+      <p className="text-3xl font-bold text-green-600">{String(value ?? 0)}</p>
+    </div>
+  );
+}
+
+function Panel({ title, children }) {
+  return (
+    <section className="bg-white rounded-2xl shadow-sm p-6">
+      <h2 className="text-xl font-bold mb-4">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function SimpleList({ items, empty, render }) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return <div className="text-slate-500">{empty}</div>;
+  }
+
+  return <div>{items.slice(0, 8).map(render)}</div>;
 }
