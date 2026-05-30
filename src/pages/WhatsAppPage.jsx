@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QRCode from "react-qr-code";
 
 import {
@@ -8,59 +8,91 @@ import {
   getWhatsAppQr,
 } from "../api";
 
+import { connectSocket, getSocket } from "../socket";
+import { useAuth } from "../context/AuthContext";
+
 export default function WhatsAppPage() {
-  const [statusText, setStatusText] = useState("DISCONNECTED");
-  const [phone, setPhone] = useState("غير مرتبط");
-  const [running, setRunning] = useState("لا");
-  const [isReady, setIsReady] = useState(false);
+  const { user } = useAuth();
+  const [status, setStatus] = useState(null);
   const [qr, setQr] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const pollingRef = useRef(null);
 
+  // ── تأكد من اتصال Socket وربط الغرفة ──────────────────────────────
   useEffect(() => {
-    refreshAll();
+    if (!user?.id) return;
 
-    const timer = setInterval(refreshAll, 4000);
+    // connectSocket يضمن الاتصال وينضم للغرفة
+    const socket = connectSocket(user.id);
 
-    return () => clearInterval(timer);
-  }, []);
-
-  function normalizeQr(data) {
-    return String(
-      data?.qrCode ||
-        data?.qr ||
-        data?.session?.qrCode ||
-        data?.status?.qrCode ||
-        ""
-    );
-  }
-
-  function applyStatus(data) {
-    const ready = Boolean(data?.isReady);
-    setIsReady(ready);
-    setStatusText(String(data?.status || "DISCONNECTED"));
-    setPhone(String(data?.phone || "غير مرتبط"));
-    setRunning(data?.running ? "نعم" : "لا");
-
-    if (ready) {
-      setQr("");
-    }
-  }
-
-  async function refreshAll() {
-    try {
-      const status = await getWhatsAppStatus();
-      applyStatus(status);
-
-      const qrData = await getWhatsAppQr();
-      const qrValue = normalizeQr(qrData);
-
-      if (qrValue && !status?.isReady) {
-        setQr(qrValue);
+    socket.on("whatsapp:status", (data) => {
+      setStatus(data);
+      if (data?.isReady) {
+        setQr("");
+        stopPolling();
       }
-    } catch (err) {
-      setError(err.message || "فشل تحديث حالة واتساب");
+      if (data?.status === "QR_READY" && data?.qrCode) {
+        setQr(data.qrCode);
+      }
+    });
+
+    socket.on("whatsapp:qr", (data) => {
+      if (data?.qrCode) {
+        setQr(data.qrCode);
+      }
+    });
+
+    // تحميل الحالة الأولية
+    loadStatus();
+    loadQr();
+
+    return () => {
+      socket.off("whatsapp:status");
+      socket.off("whatsapp:qr");
+      stopPolling();
+    };
+  }, [user?.id]);
+
+  // ── Polling احتياطي كل 8 ثواني ────────────────────────────────────
+  function startPolling() {
+    stopPolling();
+    pollingRef.current = setInterval(async () => {
+      try {
+        const data = await getWhatsAppQr();
+        if (data?.qrCode) setQr(data.qrCode);
+        if (data?.isReady) {
+          setQr("");
+          stopPolling();
+        }
+        const s = await getWhatsAppStatus();
+        setStatus(s);
+      } catch {}
+    }, 8000);
+  }
+
+  function stopPolling() {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
     }
+  }
+
+  async function loadStatus() {
+    try {
+      const data = await getWhatsAppStatus();
+      setStatus(data);
+    } catch (err) {
+      setError(err.message || "فشل تحميل حالة واتساب");
+    }
+  }
+
+  async function loadQr() {
+    try {
+      const data = await getWhatsAppQr();
+      if (data?.qrCode) setQr(data.qrCode);
+      if (data?.isReady) setQr("");
+    } catch {}
   }
 
   async function handleStart() {
@@ -68,21 +100,10 @@ export default function WhatsAppPage() {
       setLoading(true);
       setError("");
       setQr("");
-
       await startWhatsApp();
-
-      for (let i = 0; i < 12; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        await refreshAll();
-
-        const qrData = await getWhatsAppQr();
-        const qrValue = normalizeQr(qrData);
-
-        if (qrValue) {
-          setQr(qrValue);
-          break;
-        }
-      }
+      await loadStatus();
+      // ابدأ polling احتياطي — الـ QR قد يستغرق عدة ثواني
+      startPolling();
     } catch (err) {
       setError(err.message || "فشل بدء واتساب");
     } finally {
@@ -94,10 +115,10 @@ export default function WhatsAppPage() {
     try {
       setLoading(true);
       setError("");
-      setQr("");
-
+      stopPolling();
       await stopWhatsApp();
-      await refreshAll();
+      setQr("");
+      await loadStatus();
     } catch (err) {
       setError(err.message || "فشل فصل واتساب");
     } finally {
@@ -105,38 +126,30 @@ export default function WhatsAppPage() {
     }
   }
 
+  async function handleRefresh() {
+    await loadStatus();
+    await loadQr();
+  }
+
+  const isReady = status?.isReady;
+  const currentStatus = status?.status || "DISCONNECTED";
+
   return (
-    <div dir="rtl" className="space-y-6">
+    <div className="space-y-6" dir="rtl">
       {error && (
-        <div className="bg-red-50 text-red-600 rounded-xl p-4">
-          {String(error)}
-        </div>
+        <div className="bg-red-50 text-red-600 rounded-xl p-4">{error}</div>
       )}
 
       <section className="bg-white rounded-2xl p-6 shadow-sm">
         <h2 className="text-2xl font-bold mb-2">ربط واتساب</h2>
-
         <p className="text-slate-500 mb-6">
-          اربط رقم واتساب الخاص بمتجرك.
+          اربط رقم واتساب الخاص بمتجرك. كل متجر له جلسة مستقلة.
         </p>
 
         <div className="grid md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-slate-50 rounded-2xl p-5">
-            <p className="text-slate-500 text-sm mb-1">الحالة</p>
-            <p className="text-xl font-bold break-all">
-              {isReady ? "متصل ✅" : statusText}
-            </p>
-          </div>
-
-          <div className="bg-slate-50 rounded-2xl p-5">
-            <p className="text-slate-500 text-sm mb-1">رقم واتساب</p>
-            <p className="text-xl font-bold break-all">{phone}</p>
-          </div>
-
-          <div className="bg-slate-50 rounded-2xl p-5">
-            <p className="text-slate-500 text-sm mb-1">الجلسة تعمل</p>
-            <p className="text-xl font-bold break-all">{running}</p>
-          </div>
+          <InfoCard label="الحالة" value={isReady ? "متصل ✅" : currentStatus} />
+          <InfoCard label="رقم واتساب" value={status?.phone || "غير مرتبط"} />
+          <InfoCard label="الجلسة تعمل" value={status?.running ? "نعم" : "لا"} />
         </div>
 
         <div className="flex gap-3 flex-wrap">
@@ -157,7 +170,7 @@ export default function WhatsAppPage() {
           </button>
 
           <button
-            onClick={refreshAll}
+            onClick={handleRefresh}
             className="bg-slate-900 text-white px-5 py-3 rounded-xl font-bold"
           >
             تحديث
@@ -165,25 +178,44 @@ export default function WhatsAppPage() {
         </div>
       </section>
 
+      {/* ── QR Code ── */}
       {!isReady && qr && (
         <section className="bg-white rounded-2xl p-6 shadow-sm text-center">
           <h3 className="text-xl font-bold mb-4">امسح QR من واتساب</h3>
-
           <div className="inline-block bg-white p-4 rounded-2xl border">
-            <QRCode value={qr} size={180} />
+            <QRCode value={qr} size={260} />
           </div>
-
           <p className="text-slate-500 mt-4">
             واتساب ← الأجهزة المرتبطة ← ربط جهاز ← امسح الرمز.
           </p>
         </section>
       )}
 
-      {isReady && (
-        <section className="bg-green-50 text-green-700 rounded-2xl p-6">
-          واتساب متصل بنجاح.
+      {/* ── في انتظار QR ── */}
+      {!isReady && !qr && status?.running && (
+        <section className="bg-blue-50 text-blue-700 rounded-2xl p-6 text-center">
+          <div className="flex items-center justify-center gap-3">
+            <span className="animate-spin text-2xl">⏳</span>
+            <span className="font-semibold">جاري تحضير رمز QR، انتظر لحظة...</span>
+          </div>
         </section>
       )}
+
+      {/* ── متصل ── */}
+      {isReady && (
+        <section className="bg-green-50 text-green-700 rounded-2xl p-6">
+          واتساب متصل بنجاح. النظام سيرد تلقائيًا على عملاء هذا المتجر.
+        </section>
+      )}
+    </div>
+  );
+}
+
+function InfoCard({ label, value }) {
+  return (
+    <div className="bg-slate-50 rounded-2xl p-5">
+      <p className="text-slate-500 text-sm mb-1">{label}</p>
+      <p className="text-xl font-bold">{value}</p>
     </div>
   );
 }
