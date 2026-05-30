@@ -26,6 +26,20 @@ export default function WhatsAppPage() {
     return () => clearInterval(timer);
   }, []);
 
+  function extractQr(data) {
+    return (
+      data?.qrCode ||
+      data?.qr ||
+      data?.session?.qrCode ||
+      data?.status?.qrCode ||
+      ""
+    );
+  }
+
+  function isReadyData(data) {
+    return Boolean(data?.isReady || data?.session?.isReady || data?.status?.isReady);
+  }
+
   async function loadStatus() {
     try {
       const data = await getWhatsAppStatus();
@@ -43,15 +57,17 @@ export default function WhatsAppPage() {
     try {
       const data = await getWhatsAppQr();
 
-      if (data?.qrCode) {
-        setQr(String(data.qrCode));
+      const qrValue = extractQr(data);
+
+      if (qrValue) {
+        setQr(String(qrValue));
       }
 
-      if (data?.isReady) {
+      if (isReadyData(data)) {
         setQr("");
       }
-    } catch {
-      // تجاهل مؤقت
+    } catch (err) {
+      console.log("QR load error:", err);
     }
   }
 
@@ -59,13 +75,31 @@ export default function WhatsAppPage() {
     try {
       setLoading(true);
       setError("");
+      setQr("");
 
       await startWhatsApp();
 
-      setTimeout(() => {
-        loadStatus();
-        loadQr();
-      }, 1500);
+      let foundQr = "";
+
+      for (let i = 0; i < 12; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const data = await getWhatsAppQr();
+        const qrValue = extractQr(data);
+
+        if (qrValue) {
+          foundQr = String(qrValue);
+          break;
+        }
+      }
+
+      if (foundQr) {
+        setQr(foundQr);
+      } else {
+        setError("تم بدء الربط، لكن لم يصل QR بعد. اضغط تحديث بعد ثوانٍ.");
+      }
+
+      await loadStatus();
     } catch (err) {
       setError(err.message || "فشل بدء واتساب");
     } finally {
@@ -80,6 +114,7 @@ export default function WhatsAppPage() {
 
       await stopWhatsApp();
       setQr("");
+
       await loadStatus();
     } catch (err) {
       setError(err.message || "فشل فصل واتساب");
