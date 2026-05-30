@@ -44,14 +44,14 @@ export default function WhatsAppPage() {
       const data = await getWhatsAppQr();
 
       if (data?.qrCode) {
-        setQr(data.qrCode);
+        setQr(String(data.qrCode));
       }
 
       if (data?.isReady) {
         setQr("");
       }
     } catch {
-      // تجاهل مؤقتًا حتى لا تنهار الصفحة
+      // تجاهل مؤقت
     }
   }
 
@@ -80,7 +80,6 @@ export default function WhatsAppPage() {
 
       await stopWhatsApp();
       setQr("");
-
       await loadStatus();
     } catch (err) {
       setError(err.message || "فشل فصل واتساب");
@@ -90,7 +89,11 @@ export default function WhatsAppPage() {
   }
 
   const isReady = Boolean(status?.isReady);
-  const currentStatus = status?.status || "DISCONNECTED";
+
+  const currentStatus =
+    typeof status?.status === "object"
+      ? JSON.stringify(status.status)
+      : status?.status || "DISCONNECTED";
 
   return (
     <div className="space-y-6" dir="rtl">
@@ -177,10 +180,17 @@ export default function WhatsAppPage() {
 }
 
 function InfoCard({ label, value }) {
+  const displayValue =
+    value === null || value === undefined
+      ? "-"
+      : typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+
   return (
     <div className="bg-slate-50 rounded-2xl p-5">
       <p className="text-slate-500 text-sm mb-1">{label}</p>
-      <p className="text-xl font-bold">{value}</p>
+      <p className="text-xl font-bold break-all">{displayValue}</p>
     </div>
   );
 }
